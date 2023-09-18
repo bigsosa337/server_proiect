@@ -335,6 +335,58 @@ app.post('/duplicateImage/:filename', async (req, res) => {
     }
 });
 
+
+// Modify your server code to handle search
+app.get('/searchImages', async (req, res) => {
+    try {
+        const { query, option } = req.query;
+
+        if (!query) {
+            return res.status(400).json({ error: 'Search query is required.' });
+        }
+
+        const [files] = await storage.bucket().getFiles({ prefix: 'images/' });
+
+        const filenames = files.map((file) => file.name.split('/').pop());
+
+        // Fetch image details for all filenames concurrently
+        const imageDetailPromises = filenames.map(async (filename) => {
+            const imageDetails = await db.db.collection("images")
+                .where("filename", "==", `images/${filename}`)
+                .get();
+            return { filename, imageDetails };
+        });
+
+        const imageDetailsArray = await Promise.all(imageDetailPromises);
+
+        // Filter the results based on the selected option and query
+        const filteredFilenames = imageDetailsArray
+            .filter(({ imageDetails }) => {
+                if (!imageDetails.empty) {
+                    const metadata = imageDetails.docs[0].data();
+
+                    // Determine which field to search based on the selected option
+                    if (option === 'title' && metadata.title.includes(query)) {
+                        return true;
+                    }
+                    if (option === 'description' && metadata.description.includes(query)) {
+                        return true;
+                    }
+                    // Add more conditions for other options as needed
+                }
+
+                return false;
+            })
+            .map(({ filename }) => filename);
+
+        res.json({ images: filteredFilenames });
+    } catch (error) {
+        console.error('Error searching images:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
 //routes
 app.post('/testCollection', async (req, res) => {
     let testScript = {}
