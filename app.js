@@ -17,6 +17,10 @@ app.use(express.json()) //we expect JSON data to be sent as payloads
 app.use(cors())
 app.use(logger('dev')); //using the HTTP logger library
 
+//import auth component
+const auth = require('./routes/auth');
+app.use('/', auth);
+
 //initializing app
 app.listen(port, () => {
     console.log(`Example app listening on port ${port}!`)
@@ -301,13 +305,13 @@ app.post('/duplicateImage/:filename', async (req, res) => {
             return res.status(404).json({ error: "Image not found." });
         }
 
-        // Create a new unique filename for the duplicate
+        // create a new unique filename for the duplicate
         const duplicatedFilename = `images/${Date.now()}-${filename}`;
 
-        // Copy the image file to the new filename in Firebase Storage
+        // copy the image file to the new filename in Firebase Storage
         await file.copy(duplicatedFilename);
 
-        // Fetch the metadata of the original image from Firestore
+        // fetch the metadata of the original image from Firestore
         const imageMetadata = await db.db.collection("images")
             .where("filename", "==", `images/${filename}`)
             .get();
@@ -318,7 +322,7 @@ app.post('/duplicateImage/:filename', async (req, res) => {
 
         const originalMetadata = imageMetadata.docs[0].data();
 
-        // Create a new document in Firestore with the duplicated filename and original metadata
+        // create a new document in Firestore with the duplicated filename and original metadata
         const duplicatedImageDetails = {
             filename: duplicatedFilename,
             title: originalMetadata.title,
@@ -336,7 +340,6 @@ app.post('/duplicateImage/:filename', async (req, res) => {
 });
 
 
-// Modify your server code to handle search
 app.get('/searchImages', async (req, res) => {
     try {
         const { query, option } = req.query;
@@ -349,7 +352,7 @@ app.get('/searchImages', async (req, res) => {
 
         const filenames = files.map((file) => file.name.split('/').pop());
 
-        // Fetch image details for all filenames concurrently
+        // fetch image details for all filenames concurrently
         const imageDetailPromises = filenames.map(async (filename) => {
             const imageDetails = await db.db.collection("images")
                 .where("filename", "==", `images/${filename}`)
@@ -359,7 +362,7 @@ app.get('/searchImages', async (req, res) => {
 
         const imageDetailsArray = await Promise.all(imageDetailPromises);
 
-        // Filter the results based on the selected option and query
+        // filter the results based on the selected option and query
         const filteredFilenames = imageDetailsArray
             .filter(({ imageDetails }) => {
                 if (!imageDetails.empty) {
