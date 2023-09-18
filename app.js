@@ -255,7 +255,85 @@ app.get('/getImageInfo/:filename', async (req, res) => {
     }
 });
 
+// Delete an image
+app.delete('/deleteImage/:filename', async (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const file = storage.bucket().file(`images/${filename}`);
 
+        const [fileExists] = await file.exists();
+
+        if (!fileExists) {
+            return res.status(404).json({ error: "Image not found." });
+        }
+
+        // Delete the image file from Firebase Storage
+        await file.delete();
+
+        // Delete the image metadata from the Firestore database
+        const imageMetadata = await db.db.collection("images")
+            .where("filename", "==", `images/${filename}`)
+            .get();
+
+        if (imageMetadata.empty) {
+            return res.status(404).json({ error: "Image metadata not found." });
+        }
+
+        const firestoreDoc = imageMetadata.docs[0];
+        await firestoreDoc.ref.delete();
+
+        res.json({ message: "Image deleted successfully." });
+    } catch (error) {
+        console.error("Error deleting image:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// Duplicate an image
+app.post('/duplicateImage/:filename', async (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const file = storage.bucket().file(`images/${filename}`);
+
+        const [fileExists] = await file.exists();
+
+        if (!fileExists) {
+            return res.status(404).json({ error: "Image not found." });
+        }
+
+        // Create a new unique filename for the duplicate
+        const duplicatedFilename = `images/${Date.now()}-${filename}`;
+
+        // Copy the image file to the new filename in Firebase Storage
+        await file.copy(duplicatedFilename);
+
+        // Fetch the metadata of the original image from Firestore
+        const imageMetadata = await db.db.collection("images")
+            .where("filename", "==", `images/${filename}`)
+            .get();
+
+        if (imageMetadata.empty) {
+            return res.status(404).json({ error: "Image metadata not found." });
+        }
+
+        const originalMetadata = imageMetadata.docs[0].data();
+
+        // Create a new document in Firestore with the duplicated filename and original metadata
+        const duplicatedImageDetails = {
+            filename: duplicatedFilename,
+            title: originalMetadata.title,
+            description: originalMetadata.description,
+            tags: originalMetadata.tags,
+        };
+
+        const result = await db.db.collection("images").add(duplicatedImageDetails);
+
+        res.json({ message: "Image duplicated successfully." });
+    } catch (error) {
+        console.error("Error duplicating image:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
 
 //routes
 app.post('/testCollection', async (req, res) => {
