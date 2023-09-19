@@ -34,8 +34,33 @@ const upload = multer({
 });
 
 
+//check if authorized
+function checkAuthorization(req, res, next) {
+    const bearerHeader = req.headers['authorization'];
+
+    if (typeof bearerHeader !== 'undefined') {
+        const bearer = bearerHeader.split(" ");
+        req.token = bearer[1];
+        jwt.verify(req.token, serverSecret, (err, decoded) => {
+            if (err) {
+                if (err.expiredAt) {
+                    res.status(401).json({ message: "Token has expired. Please login again.", expiredAt: err.expiredAt });
+                } else {
+                    res.status(401).json({ message: "Invalid token." });
+                }
+            } else {
+                console.log(decoded.email)
+                next();
+            }
+        });
+    } else {
+        res.status(401).json({ message: "You are not authorized." });
+    }
+}
+
+
 //this function handles the upload of the image
-app.post('/uploadImage', upload.single('image'), async (req, res) => {
+app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: "No image file selected." });
@@ -45,11 +70,11 @@ app.post('/uploadImage', upload.single('image'), async (req, res) => {
         filename = filename.split('.')
         filename.pop();
         console.log('-------------------------')
-        console.log(filename, typeof filename)
+        console.log(Array.isArray(req.body.tags))
         console.log('-------------------------')
         filename = filename.join(".");
 
-        const tags = Array.isArray(req.body.tags) ? req.body.tags : [];
+        const tags = Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',');
         const description = req.body.description || '';
         const title = req.body.title || '';
 
@@ -63,9 +88,17 @@ app.post('/uploadImage', upload.single('image'), async (req, res) => {
             tags: tags,
             // Add other image-related details as needed
         };
-
+        console.log(typeof tags)
         const result = await db.db.collection("images").add(imageDetails);
 
+        const tagExists = await db.db.collection("tags").get();
+        const existingTags = tagExists.docs.map(doc => doc.data().tag);
+
+        for (const tag of tags) {
+            if (!existingTags.includes(tag)) {
+                await db.db.collection("tags").add({ tag: tag });
+            }
+        }
         res.json({ message: "Image uploaded successfully." });
     } catch (error) {
         console.error("Error uploading image:", error);
@@ -90,100 +123,8 @@ app.get('/listImages', async (req, res) => {
 
 
 //this function gets a single image images from the database
-app.get('/getImage/:filename', async (req, res) => {
-    try {
-        const filename = req.params.filename;
-        const file = storage.bucket().file(`images/${filename}`);
 
-        const [fileExists] = await file.exists();
 
-        if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
-        }
-
-        const [metadata] = await file.getMetadata();
-
-        res.setHeader('Content-Type', 'image/jpeg'); // Adjust the content type as needed
-
-        const response = {
-            metadata,
-            imageStream: file.createReadStream(),
-        };
-
-        res.json(response);
-    } catch (error) {
-        console.error("Error retrieving image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
-app.get('/getImageDetails/:filename', async (req, res) => {
-    try {
-        const filename = req.params.filename;
-        const file = storage.bucket().file(`images/${filename}`);
-
-        const [fileExists] = await file.exists();
-
-        if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
-        }
-
-        const imageMetadata = await db.db.collection("images")
-            .where("filename", "==", `images/${filename}`)
-            .get();
-
-        if (imageMetadata.empty) {
-            return res.status(404).json({ error: "Image metadata not found." });
-        }
-
-        const metadata = imageMetadata.docs[0].data();
-
-        // Include the URL to the image in the metadata
-        metadata.imageUrl = file.publicUrl();
-
-        res.json(metadata);
-    } catch (error) {
-        console.error("Error retrieving image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
-app.get('/getImageWithDetails/:filename', async (req, res) => {
-    try {
-        const filename = req.params.filename;
-        const file = storage.bucket().file(`images/${filename}`);
-
-        const [fileExists] = await file.exists();
-
-        if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
-        }
-
-        const [metadata] = await file.getMetadata();
-
-        const imageMetadata = await db.db.collection("images")
-            .where("filename", "==", `images/${filename}`)
-            .get();
-
-        if (imageMetadata.empty) {
-            return res.status(404).json({ error: "Image metadata not found." });
-        }
-
-        const firestoreMetadata = imageMetadata.docs[0].data();
-
-        const combinedMetadata = {
-            ...metadata,
-            ...firestoreMetadata,
-        };
-
-        combinedMetadata.imageUrl = file.publicUrl();
-
-        res.json(combinedMetadata);
-    } catch (error) {
-        console.error("Error retrieving image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
 
 app.get('/getImageData/:filename', async (req, res) => {
     try {
@@ -207,10 +148,12 @@ app.get('/getImageData/:filename', async (req, res) => {
     }
 });
 
-app.get('/getImage1/:filename', async (req, res) => {
+app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
         const file = storage.bucket().file(`images/${filename}`);
+        const query = db.db.collection("images").where("filename", "==", `images/${filename}`);
+        const snapshot = await query.get();
 
         const [fileExists] = await file.exists();
 
@@ -218,13 +161,20 @@ app.get('/getImage1/:filename', async (req, res) => {
             return res.status(404).json({ error: "Image not found." });
         }
 
-        const fileStream = file.createReadStream();
+        const imageInfo = {
+            title: req.body.title || '',
+            description: req.body.description || '',
+            tags: Array.isArray(req.body.tags) ? req.body.tags : [],
+        };
 
-        res.setHeader('Content-Type', 'image/jpeg'); // Adjust the content type as needed
+        // Use the update method on each document reference in the snapshot
+        snapshot.forEach(async (doc) => {
+            await doc.ref.update(imageInfo); // Update the document with the new data
+        });
 
-        fileStream.pipe(res);
+        res.json({ message: "Image updated successfully." });
     } catch (error) {
-        console.error("Error retrieving image:", error);
+        console.error("Error updating image:", error);
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
@@ -260,7 +210,7 @@ app.get('/getImageInfo/:filename', async (req, res) => {
 });
 
 // Delete an image
-app.delete('/deleteImage/:filename', async (req, res) => {
+app.delete('/deleteImage/:filename', checkAuthorization,async (req, res) => {
     try {
         const filename = req.params.filename;
         const file = storage.bucket().file(`images/${filename}`);
@@ -294,7 +244,7 @@ app.delete('/deleteImage/:filename', async (req, res) => {
 });
 
 // Duplicate an image
-app.post('/duplicateImage/:filename', async (req, res) => {
+app.post('/duplicateImage/:filename',checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
         const file = storage.bucket().file(`images/${filename}`);
@@ -389,6 +339,64 @@ app.get('/searchImages', async (req, res) => {
     }
 });
 
+app.get('/getByTags', async (req, res) => {
+    try {
+        const { tags } = req.query;
+
+        if (!tags) {
+            return res.status(400).json({ error: 'Tags are required.' });
+        }
+
+        const tagsArray = tags.split(',');
+
+        const [files] = await storage.bucket().getFiles({ prefix: 'images/' });
+
+        const filenames = files.map((file) => file.name.split('/').pop());
+
+        // fetch image details for all filenames concurrently
+        const imageDetailPromises = filenames.map(async (filename) => {
+            const imageDetails = await db.db.collection("images")
+                .where("filename", "==", `images/${filename}`)
+                .get();
+            return { filename, imageDetails };
+        });
+
+        const imageDetailsArray = await Promise.all(imageDetailPromises);
+
+        // filter the results based on the selected option and query
+        const filteredFilenames = imageDetailsArray
+            .filter(({ imageDetails }) => {
+                if (!imageDetails.empty) {
+                    const metadata = imageDetails.docs[0].data();
+
+                    // Determine which field to search based on the selected option
+                    if (metadata.tags.some((tag) => tagsArray.includes(tag))) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            .map(({ filename }) => filename);
+
+        res.json({ images: filteredFilenames });
+    } catch (error) {
+        console.error('Error searching images:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+})
+
+// Add this route to your Express.js app
+app.get('/getTags', async (req, res) => {
+    try {
+        const tagsSnapshot = await db.db.collection("tags").get();
+        const tags = tagsSnapshot.docs.map(doc => doc.data().tag);
+        res.json({ tags });
+    } catch (error) {
+        console.error("Error fetching tags:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
 
 //routes
 app.post('/testCollection', async (req, res) => {
