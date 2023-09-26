@@ -4,13 +4,11 @@ const express = require('express');
 const app = express();
 const port = 3000;
 const multer = require('multer');
-const bcrypt = require('bcrypt');
-const saltRounds = 10;
 const jwt = require('jsonwebtoken')
 const serverSecret = 'secretdiscret'
 const logger = require('morgan'); //importing a HTTP logger
 let db = require("./database")
-// const firebase = require("firebase/compat");
+const sharp = require('sharp');
 
 app.use(express.urlencoded({extended: false}))
 app.use(express.json()) //we expect JSON data to be sent as payloads
@@ -21,13 +19,17 @@ app.use(logger('dev')); //using the HTTP logger library
 const auth = require('./routes/auth');
 app.use('/', auth);
 
+//import all the getters
+const getters = require('./routes/getters');
+app.use('/', getters);
+
+
 //initializing app
 app.listen(port, () => {
     console.log(`Example app listening on port ${port}!`)
 });
 
 const {storage} = require("./database"); // import the Firebase Storage instance
-const storageRef = storage;
 
 const upload = multer({
     storage: multer.memoryStorage(), // Uue in-memory storage for handling file uploads
@@ -44,9 +46,9 @@ function checkAuthorization(req, res, next) {
         jwt.verify(req.token, serverSecret, (err, decoded) => {
             if (err) {
                 if (err.expiredAt) {
-                    res.status(401).json({ message: "Token has expired. Please login again.", expiredAt: err.expiredAt });
+                    res.status(401).json({message: "Token has expired. Please login again.", expiredAt: err.expiredAt});
                 } else {
-                    res.status(401).json({ message: "Invalid token." });
+                    res.status(401).json({message: "Invalid token."});
                 }
             } else {
                 console.log(decoded.email)
@@ -54,7 +56,7 @@ function checkAuthorization(req, res, next) {
             }
         });
     } else {
-        res.status(401).json({ message: "You are not authorized." });
+        res.status(401).json({message: "You are not authorized."});
     }
 }
 
@@ -63,8 +65,9 @@ function checkAuthorization(req, res, next) {
 app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
-            return res.status(400).json({ error: "No image file selected." });
+            return res.status(400).json({error: "No image file selected."});
         }
+
 
         let filename = `images/${Date.now()}-${req.file.originalname}`;
         filename = filename.split('.')
@@ -96,57 +99,82 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
 
         for (const tag of tags) {
             if (!existingTags.includes(tag)) {
-                await db.db.collection("tags").add({ tag: tag });
+                await db.db.collection("tags").add({tag: tag});
             }
         }
-        res.json({ message: "Image uploaded successfully." });
+        res.json({message: "Image uploaded successfully."});
     } catch (error) {
         console.error("Error uploading image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
-
-//this function gets all the images from the database
-app.get('/listImages', async (req, res) => {
-    try {
-        const [files] = await storage.bucket().getFiles({prefix: 'images/'});
-
-        const filenames = files.map((file) => file.name.split('/').pop());
-
-        res.json({images: filenames});
-    } catch (error) {
-        console.error("Error listing images:", error);
         res.status(500).json({error: "Internal Server Error"});
     }
 });
 
 
-//this function gets a single image images from the database
-
-
-
-app.get('/getImageData/:filename', async (req, res) => {
+app.post('/uploadFilteredImage', checkAuthorization, upload.single('image'), async (req, res) => {
     try {
-        const filename = req.params.filename;
-        const file = storage.bucket().file(`images/${filename}`);
-
-        const [fileExists] = await file.exists();
-
-        if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
+        if (!req.file) {
+            return res.status(400).json({error: "No image file selected."});
         }
 
-        const fileStream = file.createReadStream();
+        // Apply filter to the image
+        let image = sharp(req.file.buffer);
+        console.log(req.body.filter)
+        switch (req.body.filter) {
+            case 'evening':
+                image = image.modulate({brightness: 0.8});
+                break;
+            case 'incbrightness':
+                image = image.modulate({brightness: 1.3});
+                break;
+            case 'greyscale':
+                image = image.grayscale();
+                break;
+            case 'invert':
+                image = image.linear(-1, 255)
+                break;
+            default:
+                break;
+        }
+        const filteredImageBuffer = await image.toBuffer();
 
-        res.setHeader('Content-Type', 'image/jpeg'); // Adjust the content type as needed
+        let filename = `images/${Date.now()}-${req.file.originalname}`;
+        filename = filename.split('.')
+        filename.pop();
+        filename = filename.join(".");
 
-        fileStream.pipe(res);
+        const tags = Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',');
+        const description = req.body.description || '';
+        const title = req.body.title || '';
+
+        const file = storage.bucket().file(filename);
+        await file.save(filteredImageBuffer); // Save the filtered image
+
+        const imageDetails = {
+            filename: filename,
+            title: title,
+            description: description,
+            tags: tags,
+            // Add other image-related details as needed
+        };
+
+        const result = await db.db.collection("images").add(imageDetails);
+
+        const tagExists = await db.db.collection("tags").get();
+        const existingTags = tagExists.docs.map(doc => doc.data().tag);
+
+        for (const tag of tags) {
+            if (!existingTags.includes(tag)) {
+                await db.db.collection("tags").add({tag: tag});
+            }
+        }
+
+        res.json({message: "Image uploaded successfully."});
     } catch (error) {
-        console.error("Error retrieving image data:", error);
-        res.status(500).json({ error: "Internal Server Error" });
+        console.error("Error uploading image:", error);
+        res.status(500).json({error: "Internal Server Error"});
     }
 });
+
 
 app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
     try {
@@ -158,7 +186,7 @@ app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
         const [fileExists] = await file.exists();
 
         if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
+            return res.status(404).json({error: "Image not found."});
         }
 
         const imageInfo = {
@@ -167,50 +195,56 @@ app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
             tags: Array.isArray(req.body.tags) ? req.body.tags : [],
         };
 
-        // Use the update method on each document reference in the snapshot
-        snapshot.forEach(async (doc) => {
-            await doc.ref.update(imageInfo); // Update the document with the new data
+        const updatePromises = snapshot.docs.map(async (doc) => {
+            // Get the existing tags
+            const existingTags = doc.data().tags || [];
+
+            // Compare existing tags with new tags
+            const removedTags = existingTags.filter(tag => !imageInfo.tags.includes(tag));
+            const addedTags = imageInfo.tags.filter(tag => !existingTags.includes(tag));
+
+            // Update the document with the new data
+            await doc.ref.update(imageInfo);
+
+            // Remove tags that were removed from the image
+            const removeTagPromises = removedTags.map(async (tag) => {
+                const tagQuery = await db.db.collection("tags")
+                    .where("tag", "==", tag)
+                    .get();
+
+                if (!tagQuery.empty) {
+                    const tagDoc = tagQuery.docs[0];
+                    await tagDoc.ref.delete();
+                }
+            });
+
+            // Add new tags to the tag collection
+            const addTagPromises = addedTags.map(async (tag) => {
+                const tagExistsQuery = await db.db.collection("tags")
+                    .where("tag", "==", tag)
+                    .get();
+
+                if (tagExistsQuery.empty) {
+                    await db.db.collection("tags").add({tag: tag});
+                }
+            });
+
+            // Await all remove and add tag promises
+            await Promise.all([...removeTagPromises, ...addTagPromises]);
         });
 
-        res.json({ message: "Image updated successfully." });
+        // Await all update promises
+        await Promise.all(updatePromises);
+
+        res.json({message: "Image updated successfully."});
     } catch (error) {
         console.error("Error updating image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
-app.get('/getImageInfo/:filename', async (req, res) => {
-    try {
-        const filename = req.params.filename;
-
-        const querySnapshot = await db.db.collection("images")
-            .where("filename", "==", `images/${filename}`)
-            .get();
-        console.log(querySnapshot, `images/${filename}`)
-        if (querySnapshot.empty) {
-            // If no matching documents found, send a 404 response
-            return res.status(404).json({ error: "Image not found." });
-        }
-
-        const imageInfo = querySnapshot.docs[0].data();
-
-        const imageInfoResponse = {
-            filename: imageInfo.filename,
-            title: imageInfo.title,
-            description: imageInfo.description,
-            tags: imageInfo.tags,
-            // Add other fields as needed
-        };
-
-        res.json({ imageInfo: imageInfoResponse });
-    } catch (error) {
-        console.error("Error fetching image information:", error);
-        res.status(500).json({ error: "Internal Server Error" });
+        res.status(500).json({error: "Internal Server Error"});
     }
 });
 
 // Delete an image
-app.delete('/deleteImage/:filename', checkAuthorization,async (req, res) => {
+app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
         const file = storage.bucket().file(`images/${filename}`);
@@ -218,7 +252,7 @@ app.delete('/deleteImage/:filename', checkAuthorization,async (req, res) => {
         const [fileExists] = await file.exists();
 
         if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
+            return res.status(404).json({error: "Image not found."});
         }
 
         // Delete the image file from Firebase Storage
@@ -230,21 +264,45 @@ app.delete('/deleteImage/:filename', checkAuthorization,async (req, res) => {
             .get();
 
         if (imageMetadata.empty) {
-            return res.status(404).json({ error: "Image metadata not found." });
+            return res.status(404).json({error: "Image metadata not found."});
         }
 
+        // Get the tags associated with the image being deleted
+        const imageTags = imageMetadata.docs[0].data().tags;
+
+        // Delete the image metadata
         const firestoreDoc = imageMetadata.docs[0];
         await firestoreDoc.ref.delete();
 
-        res.json({ message: "Image deleted successfully." });
+        // Check if there are any other images with the same tags
+        const imagesWithTagsQuery = await db.db.collection("images")
+            .where("tags", "array-contains-any", imageTags)
+            .get();
+
+        // If no other images have the same tags, remove the tags from the tag collection
+        if (imagesWithTagsQuery.empty) {
+            for (const tag of imageTags) {
+                const tagQuery = await db.db.collection("tags")
+                    .where("tag", "==", tag)
+                    .get();
+
+                if (!tagQuery.empty) {
+                    const tagDoc = tagQuery.docs[0];
+                    await tagDoc.ref.delete();
+                }
+            }
+        }
+
+        res.json({message: "Image deleted successfully."});
     } catch (error) {
         console.error("Error deleting image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
+        res.status(500).json({error: "Internal Server Error"});
     }
 });
 
+
 // Duplicate an image
-app.post('/duplicateImage/:filename',checkAuthorization, async (req, res) => {
+app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
         const file = storage.bucket().file(`images/${filename}`);
@@ -252,7 +310,7 @@ app.post('/duplicateImage/:filename',checkAuthorization, async (req, res) => {
         const [fileExists] = await file.exists();
 
         if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
+            return res.status(404).json({error: "Image not found."});
         }
 
         // create a new unique filename for the duplicate
@@ -267,7 +325,7 @@ app.post('/duplicateImage/:filename',checkAuthorization, async (req, res) => {
             .get();
 
         if (imageMetadata.empty) {
-            return res.status(404).json({ error: "Image metadata not found." });
+            return res.status(404).json({error: "Image metadata not found."});
         }
 
         const originalMetadata = imageMetadata.docs[0].data();
@@ -282,133 +340,12 @@ app.post('/duplicateImage/:filename',checkAuthorization, async (req, res) => {
 
         const result = await db.db.collection("images").add(duplicatedImageDetails);
 
-        res.json({ message: "Image duplicated successfully." });
+        res.json({message: "Image duplicated successfully."});
     } catch (error) {
         console.error("Error duplicating image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
+        res.status(500).json({error: "Internal Server Error"});
     }
 });
-
-
-app.get('/searchImages', async (req, res) => {
-    try {
-        const { query, option } = req.query;
-
-        if (!query) {
-            return res.status(400).json({ error: 'Search query is required.' });
-        }
-
-        const [files] = await storage.bucket().getFiles({ prefix: 'images/' });
-
-        const filenames = files.map((file) => file.name.split('/').pop());
-
-        // fetch image details for all filenames concurrently
-        const imageDetailPromises = filenames.map(async (filename) => {
-            const imageDetails = await db.db.collection("images")
-                .where("filename", "==", `images/${filename}`)
-                .get();
-            return { filename, imageDetails };
-        });
-
-        const imageDetailsArray = await Promise.all(imageDetailPromises);
-
-        // filter the results based on the selected option and query
-        const filteredFilenames = imageDetailsArray
-            .filter(({ imageDetails }) => {
-                if (!imageDetails.empty) {
-                    const metadata = imageDetails.docs[0].data();
-
-                    // Determine which field to search based on the selected option
-                    if (option === 'title' && metadata.title.includes(query)) {
-                        return true;
-                    }
-                    if (option === 'description' && metadata.description.includes(query)) {
-                        return true;
-                    }
-                    // Add more conditions for other options as needed
-                }
-
-                return false;
-            })
-            .map(({ filename }) => filename);
-
-        res.json({ images: filteredFilenames });
-    } catch (error) {
-        console.error('Error searching images:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-app.get('/getByTags', async (req, res) => {
-    try {
-        const { tags } = req.query;
-
-        if (!tags) {
-            return res.status(400).json({ error: 'Tags are required.' });
-        }
-
-        const tagsArray = tags.split(',');
-
-        const [files] = await storage.bucket().getFiles({ prefix: 'images/' });
-
-        const filenames = files.map((file) => file.name.split('/').pop());
-
-        // fetch image details for all filenames concurrently
-        const imageDetailPromises = filenames.map(async (filename) => {
-            const imageDetails = await db.db.collection("images")
-                .where("filename", "==", `images/${filename}`)
-                .get();
-            return { filename, imageDetails };
-        });
-
-        const imageDetailsArray = await Promise.all(imageDetailPromises);
-
-        // filter the results based on the selected option and query
-        const filteredFilenames = imageDetailsArray
-            .filter(({ imageDetails }) => {
-                if (!imageDetails.empty) {
-                    const metadata = imageDetails.docs[0].data();
-
-                    // Determine which field to search based on the selected option
-                    if (metadata.tags.some((tag) => tagsArray.includes(tag))) {
-                        return true;
-                    }
-                }
-
-                return false;
-            })
-            .map(({ filename }) => filename);
-
-        res.json({ images: filteredFilenames });
-    } catch (error) {
-        console.error('Error searching images:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-})
-
-// Add this route to your Express.js app
-app.get('/getTags', async (req, res) => {
-    try {
-        const tagsSnapshot = await db.db.collection("tags").get();
-        const tags = tagsSnapshot.docs.map(doc => doc.data().tag);
-        res.json({ tags });
-    } catch (error) {
-        console.error("Error fetching tags:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
-//routes
-app.post('/testCollection', async (req, res) => {
-    let testScript = {}
-    testScript.title = req.body.title;
-    testScript.description = req.body.description;
-    const result = await db.db.collection("test").add(testScript);
-    setTimeout(function () {
-        res.json({message: result.id});
-    }, 1500)
-});
-
 
 module.exports = app;
 module.exports = db;
