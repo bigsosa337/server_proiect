@@ -5,20 +5,6 @@ const checkAuthorization = require('../routes/checkAuthorization');
 const router = express.Router();
 
 // List images for the authenticated user
-router.get('/listImages', checkAuthorization, async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
-        const snapshot = await userImagesRef.get();
-
-        const filenames = snapshot.docs.map(doc => doc.data().filename.split('/').pop());
-
-        res.json({ images: filenames });
-    } catch (error) {
-        console.error("Error listing images:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
 // Get single image data
 router.get('/listImages', checkAuthorization, async (req, res) => {
     try {
@@ -94,18 +80,6 @@ router.get('/getImageData/images/:filename', checkAuthorization, async (req, res
 });
 
 // Search images by title
-function generateKeywords(title) {
-    return title.toLowerCase().split(' ').filter(term => term.trim() !== '');
-}
-
-// Example function to add an image
-async function addImage(userId, image) {
-    const titleKeywords = generateKeywords(image.title);
-    await db.db.collection('users').doc(userId).collection('images').add({
-        ...image,
-        titleKeywords
-    });
-}
 
 function createSearchTerm(query) {
     return query.toLowerCase().split(' ').filter(term => term.trim() !== '');
@@ -122,15 +96,12 @@ router.get('/searchImages', checkAuthorization, async (req, res) => {
             return res.status(400).json({ error: 'Search query is required.' });
         }
 
-        const searchTerms = createSearchTerm(query);
-        console.log('Search Terms:', searchTerms);
-
         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
         const querySnapshot = await userImagesRef.get();
         const allImages = querySnapshot.docs.map(doc => doc.data());
 
         const matchedImages = allImages.filter(image =>
-            searchTerms.some(term => image.title.toLowerCase().includes(term))
+            image.title.toLowerCase().includes(query.toLowerCase())
         );
 
         const filenames = matchedImages.map(image => image.filename);
@@ -142,7 +113,6 @@ router.get('/searchImages', checkAuthorization, async (req, res) => {
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
-
 
 
 // Search shared images by title
