@@ -11,82 +11,73 @@ const secret = 'secretdiscret';
 router.post('/register', async (req, res) => {
     console.log('YOU ARE USING -POST- METHOD WITH:', req.body);
 
-    let data = req.body;
+    const data = req.body;
     console.log(data);
-    let emailExist = false;
     const userRef = db.db.collection('users');
-    console.log(userRef);
 
-    const snapshot = await userRef.where('email', '==', data.email).get();
-    if (!snapshot.empty) {
-        emailExist = true;
-    }
+    try {
+        // Check if the email already exists
+        const snapshot = await userRef.where('email', '==', data.email).get();
+        if (!snapshot.empty) {
+            console.log('Email already linked to an account!');
+            return res.status(400).send('Email already linked to an account!');
+        }
 
-    if (emailExist) {
-        console.log('Email already linked to an account!');
-        res.send('Email already linked to an account!');
-    } else {
-        bcrypt.genSalt(saltRounds, function (err, salt) {
-            bcrypt.hash(data.password, salt, async function (err, hash) {
-                data.password = hash;
-                console.log(data);
-                const user = await db.db.collection('users').add(data);
-                console.log(`You have successfully registered with id ${user.id}`);
-                res.send('Successful registration!');
-            });
-        });
+        // Hash the password
+        const salt = await bcrypt.genSalt(saltRounds);
+        const hash = await bcrypt.hash(data.password, salt);
+        data.password = hash;
+
+        // Add the user to the database
+        const user = await userRef.add(data);
+        console.log(`You have successfully registered with id ${user.id}`);
+        res.send('Successful registration!');
+    } catch (error) {
+        console.error('Error during registration:', error);
+        res.status(500).send('Internal server error');
     }
 });
 
-//LOG IN
-router.post("/login", async (req, res) => {
-    let data = req.body
-    let existingUser = false
+// Define the login route within the router
+router.post('/login', async (req, res) => {
+    const data = req.body;
+    const userRef = db.db.collection('users');
 
-    const userDb = db.db.collection("users")
-    const user = await userDb.where("email", "==", data.email).get()
+    try {
+        // Check if the user exists
+        const snapshot = await userRef.where('email', '==', data.email).get();
+        if (snapshot.empty) {
+            console.log('No user found');
+            return res.status(400).json({ user: false, message: 'No user found' });
+        }
 
-    if ( user.empty) {
-        let response = {}
-        response.user = false
-        response.message = "No user found"
-        res.json(response)
-        console.log('utilizatorul nu exista')
-    } else {
-        existingUser = true
-        user.forEach((doc) => {
-            bcrypt
-                .compare(data.password, doc.data().password, async function(err, result) {
-                    console.log(doc.data().password)
-                    console.log(data.password + "========================")
-                    if (result) {
-                        let token = jwt.sign(
-                            {
-                                email: doc.data().email,
-                            },
-                            secret,
-                            { expiresIn: '1h' }
-                        );
-
-                        console.log('tokenul tau este: ', token)
-                        let response = {}
-                        res.send({token})
-                        response.message = "You have access to edit resources for 1 hour"
-                    } else {
-                        let response = {}
-                        response.message = "Wrong password or email"
-                        res.json(response)
-                        console.log('Wrong password or email address')
-                    }
-                })
+        // Get the user document
+        let userDoc;
+        snapshot.forEach(doc => {
+            userDoc = doc;
         });
+
+        // Compare the provided password with the stored hash
+        const isPasswordValid = await bcrypt.compare(data.password, userDoc.data().password);
+        if (!isPasswordValid) {
+            console.log('Wrong password or email');
+            return res.status(400).json({ message: 'Wrong password or email' });
+        }
+
+        // Generate a JWT token
+        const token = jwt.sign(
+            { email: userDoc.data().email },
+            secret,
+            { expiresIn: '1h' }
+        );
+
+        console.log('Your token is:', token);
+        res.json({ token, message: 'You have access to edit resources for 1 hour' });
+    } catch (error) {
+        console.error('Error during login:', error);
+        res.status(500).send('Internal server error');
     }
+});
 
-
-    // res.send(response)
-
-})
-
-
-// Export the router for use   as m i  d dlewa re
+// Export the router for use as middleware
 module.exports = router;

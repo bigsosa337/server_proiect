@@ -3,12 +3,15 @@ const cors = require('cors');
 const express = require('express');
 const app = express();
 const port = 3000;
+const admin = require('firebase-admin');
 const multer = require('multer');
 const jwt = require('jsonwebtoken')
 const serverSecret = 'secretdiscret'
 const logger = require('morgan'); //importing a HTTP logger
 let db = require("./database")
 const sharp = require('sharp');
+const checkAuthorization = require('./routes/checkAuthorization');
+
 
 app.use(express.urlencoded({extended: false}))
 app.use(express.json()) //we expect JSON data to be sent as payloads
@@ -23,6 +26,8 @@ app.use('/', auth);
 const getters = require('./routes/getters');
 app.use('/', getters);
 
+const user = require('./routes/user');
+app.use('/', user);
 
 //initializing app
 app.listen(port, () => {
@@ -36,49 +41,20 @@ const upload = multer({
 });
 
 
-//check if authorized
-function checkAuthorization(req, res, next) {
-    const bearerHeader = req.headers['authorization'];
-
-    if (typeof bearerHeader !== 'undefined') {
-        const bearer = bearerHeader.split(" ");
-        req.token = bearer[1];
-        jwt.verify(req.token, serverSecret, (err, decoded) => {
-            if (err) {
-                if (err.expiredAt) {
-                    res.status(401).json({message: "Token has expired. Please login again.", expiredAt: err.expiredAt});
-                } else {
-                    res.status(401).json({message: "Invalid token."});
-                }
-            } else {
-                console.log(decoded.email)
-                next();
-            }
-        });
-    } else {
-        res.status(401).json({message: "You are not authorized."});
-    }
-}
-
 
 //this function handles the upload of the image
 app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
-            return res.status(400).json({error: "No image file selected."});
+            return res.status(400).json({ error: "No image file selected." });
         }
 
+        const userId = req.user.id;
+        const userEmail = req.user.email;
 
         let filename = `images/${Date.now()}-${req.file.originalname}`;
-        filename = filename.split('.')
-        filename.pop();
-        console.log('-------------------------')
-        console.log(Array.isArray(req.body.tags))
-        console.log('-------------------------')
-        filename = filename.join(".");
 
-        const tags = Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',');
-        const description = req.body.description || '';
+        const tags = Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',').map(tag => tag.trim());
         const title = req.body.title || '';
 
         const file = storage.bucket().file(filename);
@@ -87,25 +63,31 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
         const imageDetails = {
             filename: filename,
             title: title,
-            description: description,
             tags: tags,
-            // Add other image-related details as needed
+            uploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+            userId: userId,
+            userEmail: userEmail
         };
-        console.log(typeof tags)
-        const result = await db.db.collection("images").add(imageDetails);
 
-        const tagExists = await db.db.collection("tags").get();
-        const existingTags = tagExists.docs.map(doc => doc.data().tag);
+        const userRef = db.db.collection('users').doc(userId);
+        const userImagesRef = userRef.collection('images');
+        await userImagesRef.add(imageDetails);
+
+        // Add tags to user's tags collection
+        const userTagsRef = userRef.collection('tags');
+        const batch = db.db.batch();
 
         for (const tag of tags) {
-            if (!existingTags.includes(tag)) {
-                await db.db.collection("tags").add({tag: tag});
-            }
+            const tagDocRef = userTagsRef.doc(tag);
+            batch.set(tagDocRef, { name: tag }, { merge: true });
         }
-        res.json({message: "Image uploaded successfully."});
+
+        await batch.commit();
+
+        res.json({ message: "Image uploaded successfully." });
     } catch (error) {
         console.error("Error uploading image:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
@@ -179,14 +161,15 @@ app.post('/uploadFilteredImage', checkAuthorization, upload.single('image'), asy
 app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
+        const userId = req.user.id; // Assuming checkAuthorization middleware adds user info to req.user
         const file = storage.bucket().file(`images/${filename}`);
-        const query = db.db.collection("images").where("filename", "==", `images/${filename}`);
+        const query = db.db.collection("users").doc(userId).collection("images").where("filename", "==", `images/${filename}`);
         const snapshot = await query.get();
 
         const [fileExists] = await file.exists();
 
         if (!fileExists) {
-            return res.status(404).json({error: "Image not found."});
+            return res.status(404).json({ error: "Image not found." });
         }
 
         const imageInfo = {
@@ -225,7 +208,7 @@ app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
                     .get();
 
                 if (tagExistsQuery.empty) {
-                    await db.db.collection("tags").add({tag: tag});
+                    await db.db.collection("tags").add({ tag: tag });
                 }
             });
 
@@ -236,35 +219,37 @@ app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
         // Await all update promises
         await Promise.all(updatePromises);
 
-        res.json({message: "Image updated successfully."});
+        res.json({ message: "Image updated successfully." });
     } catch (error) {
         console.error("Error updating image:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
 
 // Delete an image
 app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
+        const userId = req.user.id; // Assuming checkAuthorization middleware adds user info to req.user
         const file = storage.bucket().file(`images/${filename}`);
 
         const [fileExists] = await file.exists();
 
         if (!fileExists) {
-            return res.status(404).json({error: "Image not found."});
+            return res.status(404).json({ error: "Image not found." });
         }
 
         // Delete the image file from Firebase Storage
         await file.delete();
 
         // Delete the image metadata from the Firestore database
-        const imageMetadata = await db.db.collection("images")
+        const imageMetadata = await db.db.collection("users").doc(userId).collection("images")
             .where("filename", "==", `images/${filename}`)
             .get();
 
         if (imageMetadata.empty) {
-            return res.status(404).json({error: "Image metadata not found."});
+            return res.status(404).json({ error: "Image metadata not found." });
         }
 
         // Get the tags associated with the image being deleted
@@ -275,7 +260,7 @@ app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
         await firestoreDoc.ref.delete();
 
         // Check if there are any other images with the same tags
-        const imagesWithTagsQuery = await db.db.collection("images")
+        const imagesWithTagsQuery = await db.db.collection("users").doc(userId).collection("images")
             .where("tags", "array-contains-any", imageTags)
             .get();
 
@@ -293,12 +278,13 @@ app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
             }
         }
 
-        res.json({message: "Image deleted successfully."});
+        res.json({ message: "Image deleted successfully." });
     } catch (error) {
         console.error("Error deleting image:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
 
 
 // Duplicate an image

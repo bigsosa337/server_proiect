@@ -1,28 +1,60 @@
-const {storage} = require("../database");
+const express = require('express');
+const { storage } = require("../database");
 const db = require('../database');
-const express = require("express");
-const router = express.Router(); // Create an Express router instance
+const checkAuthorization = require('../routes/checkAuthorization');
+const router = express.Router();
 
-
-
-router.get('/listImages', async (req, res) => {
+// List images for the authenticated user
+router.get('/listImages', checkAuthorization, async (req, res) => {
     try {
-        const [files] = await storage.bucket().getFiles({prefix: 'images/'});
+        const userId = req.user.id;
+        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+        const snapshot = await userImagesRef.get();
 
-        const filenames = files.map((file) => file.name.split('/').pop());
+        const filenames = snapshot.docs.map(doc => doc.data().filename.split('/').pop());
 
-        res.json({images: filenames});
+        res.json({ images: filenames });
     } catch (error) {
         console.error("Error listing images:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+// Get single image data
+router.get('/listImages', checkAuthorization, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+        const snapshot = await userImagesRef.get();
+
+        const filenames = snapshot.docs.map(doc => doc.data().filename.split('/').pop());
+
+        res.json({ images: filenames });
+    } catch (error) {
+        console.error("Error listing images:", error);
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
+router.get('/listAlbums', checkAuthorization, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userAlbumsRef = db.db.collection('users').doc(userId).collection('albums');
+        const snapshot = await userAlbumsRef.get();
 
-//this function gets a single image images from the database
+        const albums = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
 
+        res.json({ albums: albums });
+    } catch (error) {
+        console.error("Error listing albums:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
 
-router.get('/getImageData/:filename', async (req, res) => {
+// Get image info
+router.get('/getImageData/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
         const file = storage.bucket().file(`images/${filename}`);
@@ -30,155 +62,208 @@ router.get('/getImageData/:filename', async (req, res) => {
         const [fileExists] = await file.exists();
 
         if (!fileExists) {
-            return res.status(404).json({error: "Image not found."});
+            return res.status(404).json({ error: "Image not found." });
         }
 
         const fileStream = file.createReadStream();
-
         res.setHeader('Content-Type', 'image/jpeg'); // Adjust the content type as needed
-
         fileStream.pipe(res);
     } catch (error) {
         console.error("Error retrieving image data:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
-router.get('/getImageInfo/:filename', async (req, res) => {
+router.get('/getImageData/images/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
+        const file = storage.bucket().file(`images/${filename}`);
 
-        const querySnapshot = await db.db.collection("images")
-            .where("filename", "==", `images/${filename}`)
-            .get();
-        console.log(querySnapshot, `images/${filename}`)
-        if (querySnapshot.empty) {
-            // If no matching documents found, send a 404 response
-            return res.status(404).json({error: "Image not found."});
+        const [fileExists] = await file.exists();
+
+        if (!fileExists) {
+            return res.status(404).json({ error: "Image not found." });
         }
 
-        const imageInfo = querySnapshot.docs[0].data();
-
-        const imageInfoResponse = {
-            filename: imageInfo.filename,
-            title: imageInfo.title,
-            description: imageInfo.description,
-            tags: imageInfo.tags,
-            // Add other fields as needed
-        };
-
-        res.json({imageInfo: imageInfoResponse});
+        const fileStream = file.createReadStream();
+        res.setHeader('Content-Type', 'image/jpeg'); // Adjust the content type as needed
+        fileStream.pipe(res);
     } catch (error) {
-        console.error("Error fetching image information:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        console.error("Error retrieving image data:", error);
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
+// Search images by title
+function generateKeywords(title) {
+    return title.toLowerCase().split(' ').filter(term => term.trim() !== '');
+}
+
+// Example function to add an image
+async function addImage(userId, image) {
+    const titleKeywords = generateKeywords(image.title);
+    await db.db.collection('users').doc(userId).collection('images').add({
+        ...image,
+        titleKeywords
+    });
+}
+
+function createSearchTerm(query) {
+    return query.toLowerCase().split(' ').filter(term => term.trim() !== '');
+}
 
 
-router.get('/searchImages', async (req, res) => {
+// Search images by title
+router.get('/searchImages', checkAuthorization, async (req, res) => {
     try {
-        const {query, option} = req.query;
+        const { query } = req.query;
+        const userId = req.user.id;
 
         if (!query) {
-            return res.status(400).json({error: 'Search query is required.'});
+            return res.status(400).json({ error: 'Search query is required.' });
         }
 
-        const [files] = await storage.bucket().getFiles({prefix: 'images/'});
+        const searchTerms = createSearchTerm(query);
+        console.log('Search Terms:', searchTerms);
 
-        const filenames = files.map((file) => file.name.split('/').pop());
+        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+        const querySnapshot = await userImagesRef.get();
+        const allImages = querySnapshot.docs.map(doc => doc.data());
 
-        // fetch image details for all filenames concurrently
-        const imageDetailPromises = filenames.map(async (filename) => {
-            const imageDetails = await db.db.collection("images")
-                .where("filename", "==", `images/${filename}`)
-                .get();
-            return {filename, imageDetails};
-        });
+        const matchedImages = allImages.filter(image =>
+            searchTerms.some(term => image.title.toLowerCase().includes(term))
+        );
 
-        const imageDetailsArray = await Promise.all(imageDetailPromises);
+        const filenames = matchedImages.map(image => image.filename);
+        console.log('Final Filenames:', filenames);
 
-        // filter the results based on the selected option and query
-        const filteredFilenames = imageDetailsArray
-            .filter(({imageDetails}) => {
-                if (!imageDetails.empty) {
-                    const metadata = imageDetails.docs[0].data();
-                    // Determine which field to search based on the selected option
-                    if (option === 'title' && metadata.title.includes(query)) {
-                        return true;
-                    }
-                    if (option === 'description' && metadata.description.includes(query)) {
-                        return true;
-                    }
-                    // Add more conditions for other options as needed
-                }
-                return false;
-            })
-            .map(({filename}) => filename);
-
-        res.json({images: filteredFilenames});
+        res.json({ images: filenames });
     } catch (error) {
         console.error('Error searching images:', error);
-        res.status(500).json({error: 'Internal Server Error'});
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
-router.get('/getByTags', async (req, res) => {
+
+
+// Search shared images by title
+router.get('/searchSharedImages/:sharedUserId', checkAuthorization, async (req, res) => {
     try {
-        const {tags} = req.query;
+        const { query } = req.query;
+        const sharedUserId = req.params.sharedUserId;
+
+        if (!query) {
+            return res.status(400).json({ error: 'Search query is required.' });
+        }
+
+        const searchTerms = createSearchTerm(query);
+        console.log('Search Terms:', searchTerms);
+
+        const sharedUserImagesRef = db.db.collection('users').doc(sharedUserId).collection('images');
+        const querySnapshot = await sharedUserImagesRef.get();
+        const allImages = querySnapshot.docs.map(doc => doc.data());
+
+        const matchedImages = allImages.filter(image =>
+            searchTerms.some(term => image.title.toLowerCase().includes(term))
+        );
+
+        const filenames = matchedImages.map(image => image.filename);
+        console.log('Final Filenames:', filenames);
+
+        res.json({ images: filenames });
+    } catch (error) {
+        console.error('Error searching shared images:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+// Get images by tags
+router.get('/getByTags', checkAuthorization, async (req, res) => {
+    try {
+        const { tags } = req.query;
+        const userId = req.user.id;
 
         if (!tags) {
-            return res.status(400).json({error: 'Tags are required.'});
+            return res.status(400).json({ error: 'Tags are required.' });
         }
 
-        const tagsArray = tags.split(',');
+        const tagsArray = tags.split(',').map(tag => tag.trim());
+        console.log('Tags Array:', tagsArray);
 
-        const [files] = await storage.bucket().getFiles({prefix: 'images/'});
-
-        const filenames = files.map((file) => file.name.split('/').pop());
-
-        // fetch image details for all filenames concurrently
-        const imageDetailPromises = filenames.map(async (filename) => {
-            const imageDetails = await db.db.collection("images")
-                .where("filename", "==", `images/${filename}`)
-                .get();
-            return {filename, imageDetails};
-        });
+        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+        const imageDetailPromises = tagsArray.map(tag => userImagesRef.where('tags', 'array-contains', tag).get());
 
         const imageDetailsArray = await Promise.all(imageDetailPromises);
 
-        // filter the results based on the selected option and query
         const filteredFilenames = imageDetailsArray
-            .filter(({imageDetails}) => {
-                if (!imageDetails.empty) {
-                    const metadata = imageDetails.docs[0].data();
+            .flatMap(querySnapshot => querySnapshot.docs)
+            .map(doc => doc.data().filename);
 
-                    // Determine which field to search based on the selected option
-                    if (metadata.tags.some((tag) => tagsArray.includes(tag))) {
-                        return true;
-                    }
-                }
-
-                return false;
-            })
-            .map(({filename}) => filename);
-
-        res.json({images: filteredFilenames});
+        console.log('Filtered Filenames:', filteredFilenames);
+        res.json({ images: filteredFilenames });
     } catch (error) {
-        console.error('Error searching images:', error);
-        res.status(500).json({error: 'Internal Server Error'});
-    }
-})
-
-// Add this route to your Express.js app
-router.get('/getTags', async (req, res) => {
-    try {
-        const tagsSnapshot = await db.db.collection("tags").get();
-        const tags = tagsSnapshot.docs.map(doc => doc.data().tag);
-        res.json({tags});
-    } catch (error) {
-        console.error("Error fetching tags:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        console.error('Error searching images by tags:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
-module.exports = router
+router.get('/getSharedByTags/:sharedUserId', checkAuthorization, async (req, res) => {
+    try {
+        const { tags } = req.query;
+        const sharedUserId = req.params.sharedUserId;
+
+        if (!tags) {
+            return res.status(400).json({ error: 'Tags are required.' });
+        }
+
+        const tagsArray = tags.split(',').map(tag => tag.trim());
+        console.log('Tags Array:', tagsArray);
+
+        const sharedUserImagesRef = db.db.collection('users').doc(sharedUserId).collection('images');
+        const imageDetailPromises = tagsArray.map(tag => sharedUserImagesRef.where('tags', 'array-contains', tag).get());
+
+        const imageDetailsArray = await Promise.all(imageDetailPromises);
+
+        const filteredFilenames = imageDetailsArray
+            .flatMap(querySnapshot => querySnapshot.docs)
+            .map(doc => doc.data().filename);
+
+        console.log('Filtered Filenames:', filteredFilenames);
+        res.json({ images: filteredFilenames });
+    } catch (error) {
+        console.error('Error searching shared images by tags:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
+// Get tags
+router.get('/getTags', checkAuthorization, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userRef = db.db.collection('users').doc(userId);
+
+        // Fetch the user's tags
+        const userTagsSnapshot = await userRef.collection('tags').get();
+        const userTags = userTagsSnapshot.docs.map(doc => doc.data().name);
+
+        // Fetch the shared users' tags
+        const sharedAlbumsSnapshot = await db.db.collection('users').doc(userId).collection('sharedAlbums').get();
+        const sharedUserIds = sharedAlbumsSnapshot.docs.map(doc => doc.data().sharedUserId);
+
+        let sharedTags = [];
+        for (const sharedUserId of sharedUserIds) {
+            const sharedUserTagsSnapshot = await db.db.collection('users').doc(sharedUserId).collection('tags').get();
+            const sharedUserTags = sharedUserTagsSnapshot.docs.map(doc => doc.data().name);
+            sharedTags = [...new Set([...sharedTags, ...sharedUserTags])]; // Ensure no duplicates
+        }
+
+        const allTags = [...new Set([...userTags, ...sharedTags])]; // Combine and deduplicate
+
+        res.json({ tags: allTags });
+    } catch (error) {
+        console.error("Error fetching tags:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+module.exports = router;
