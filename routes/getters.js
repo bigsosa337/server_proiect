@@ -5,7 +5,6 @@ const checkAuthorization = require('../routes/checkAuthorization');
 const router = express.Router();
 
 // List images for the authenticated user
-// Get single image data
 router.get('/listImages', checkAuthorization, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -21,6 +20,7 @@ router.get('/listImages', checkAuthorization, async (req, res) => {
     }
 });
 
+// List albums for the authenticated user
 router.get('/listAlbums', checkAuthorization, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -32,14 +32,14 @@ router.get('/listAlbums', checkAuthorization, async (req, res) => {
             ...doc.data()
         }));
 
-        res.json({ albums: albums });
+        res.json({ albums });
     } catch (error) {
         console.error("Error listing albums:", error);
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-// Get image info
+// Get image data
 router.get('/getImageData/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
@@ -79,12 +79,31 @@ router.get('/getImageData/images/:filename', checkAuthorization, async (req, res
     }
 });
 
-// Search images by title
+// Get image info
+router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
+    try {
+        const filename = `images/${req.params.filename}`; // Ensure the filename matches the stored format
+        const userId = req.user.id;
 
-function createSearchTerm(query) {
-    return query.toLowerCase().split(' ').filter(term => term.trim() !== '');
-}
+        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+        const imageSnapshot = await userImagesRef.where('filename', '==', filename).get();
 
+        if (imageSnapshot.empty) {
+            return res.status(404).json({ error: "Image not found." });
+        }
+
+        const imageData = imageSnapshot.docs[0].data();
+
+        res.json({
+            filename: imageData.filename,
+            title: imageData.title,
+            tags: imageData.tags
+        });
+    } catch (error) {
+        console.error("Error retrieving image information:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
 
 // Search images by title
 router.get('/searchImages', checkAuthorization, async (req, res) => {
@@ -96,12 +115,15 @@ router.get('/searchImages', checkAuthorization, async (req, res) => {
             return res.status(400).json({ error: 'Search query is required.' });
         }
 
+        const searchTerms = createSearchTerm(query);
+        console.log('Search Terms:', searchTerms);
+
         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
         const querySnapshot = await userImagesRef.get();
         const allImages = querySnapshot.docs.map(doc => doc.data());
 
         const matchedImages = allImages.filter(image =>
-            image.title.toLowerCase().includes(query.toLowerCase())
+            searchTerms.some(term => image.title.toLowerCase().includes(term))
         );
 
         const filenames = matchedImages.map(image => image.filename);
@@ -113,7 +135,6 @@ router.get('/searchImages', checkAuthorization, async (req, res) => {
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
-
 
 // Search shared images by title
 router.get('/searchSharedImages/:sharedUserId', checkAuthorization, async (req, res) => {
@@ -176,6 +197,7 @@ router.get('/getByTags', checkAuthorization, async (req, res) => {
     }
 });
 
+// Get shared images by tags
 router.get('/getSharedByTags/:sharedUserId', checkAuthorization, async (req, res) => {
     try {
         const { tags } = req.query;
@@ -204,7 +226,6 @@ router.get('/getSharedByTags/:sharedUserId', checkAuthorization, async (req, res
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
-
 
 // Get tags
 router.get('/getTags', checkAuthorization, async (req, res) => {
@@ -235,5 +256,10 @@ router.get('/getTags', checkAuthorization, async (req, res) => {
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
+// Utility functions
+function createSearchTerm(query) {
+    return query.toLowerCase().split(' ').filter(term => term.trim() !== '');
+}
 
 module.exports = router;
