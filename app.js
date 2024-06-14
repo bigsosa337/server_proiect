@@ -174,7 +174,6 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
         let filename = `images/${Date.now()}-${req.file.originalname}`;
         const tags = Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',').map(tag => tag.trim());
         const title = req.body.title || '';
-        const faces = JSON.parse(req.body.faces);  // Parse faces data
 
         const file = storage.bucket().file(filename);
         await file.save(req.file.buffer);
@@ -183,11 +182,19 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
             filename: filename,
             title: title,
             tags: tags,
-            faces: faces,
+            faces: [],  // Initialize faces as an empty array
             uploadedAt: admin.firestore.FieldValue.serverTimestamp(),
             userId: userId,
             userEmail: userEmail
         };
+
+        try {
+            const thumbnails = await generateFaceThumbnails(req.file.buffer);
+            await storeFaceThumbnails(thumbnails, userId); // Assuming filename as imageId for simplicity
+            imageDetails.faces = thumbnails; // Store thumbnails if found
+        } catch (error) {
+            console.log("No faces detected in the image.");
+        }
 
         const userRef = db.db.collection('users').doc(userId);
         const userImagesRef = userRef.collection('images');
@@ -201,8 +208,6 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
             const tagDocRef = userTagsRef.doc(tag);
             batch.set(tagDocRef, { name: tag }, { merge: true });
         }
-        const thumbnails = await generateFaceThumbnails(req.file.buffer);
-        await storeFaceThumbnails(thumbnails, userId); // Assuming filename as imageId for simplicity
 
         await batch.commit();
 
@@ -212,6 +217,7 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
 
 const storeFaceThumbnails = async (thumbnails, userId) => {
     const userDocRef = db.db.collection('users').doc(userId);
