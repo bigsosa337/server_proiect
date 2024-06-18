@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const multer = require('multer');
-const jwt = require('jsonwebtoken');
 const logger = require('morgan');
 const faceapi = require('face-api.js');
 const path = require('path');
@@ -15,7 +14,6 @@ const user = require('./routes/user');
 
 const app = express();
 const port = 3000;
-const serverSecret = 'secretdiscret';
 
 // Middleware
 app.use(cors({
@@ -127,42 +125,42 @@ const fetchWithRetry = async (url, options, maxRetries = 10) => {
     }
     return response;
 };
-
-app.post('/searchByFace', checkAuthorization, async (req, res) => {
-    try {
-        const { descriptor } = req.body;
-        if (!descriptor) {
-            return res.status(400).json({ error: "No face descriptor provided." });
-        }
-
-        const userId = req.user.id;
-        const targetDescriptor = new Float32Array(descriptor);
-
-        // Retrieve all user images and compare face descriptors
-        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
-        const snapshot = await userImagesRef.get();
-        const images = snapshot.docs.map(doc => doc.data());
-
-        const threshold = 0.6;  // Adjust threshold based on your needs
-        const matches = [];
-
-        for (const image of images) {
-            for (const face of image.faces) {
-                const faceDescriptor = new Float32Array(face.descriptor);
-                const distance = faceapi.euclideanDistance(targetDescriptor, faceDescriptor);
-                if (distance < threshold) {
-                    matches.push(image);
-                    break;
-                }
-            }
-        }
-
-        res.json({ images: matches });
-    } catch (error) {
-        console.error("Error searching by face:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
+//
+// app.post('/searchByFace', checkAuthorization, async (req, res) => {
+//     try {
+//         const { descriptor } = req.body;
+//         if (!descriptor) {
+//             return res.status(400).json({ error: "No face descriptor provided." });
+//         }
+//
+//         const userId = req.user.id;
+//         const targetDescriptor = new Float32Array(descriptor);
+//
+//         // Retrieve all user images and compare face descriptors
+//         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+//         const snapshot = await userImagesRef.get();
+//         const images = snapshot.docs.map(doc => doc.data());
+//
+//         const threshold = 0.6;  // Adjust threshold based on your needs
+//         const matches = [];
+//
+//         for (const image of images) {
+//             for (const face of image.faces) {
+//                 const faceDescriptor = new Float32Array(face.descriptor);
+//                 const distance = faceapi.euclideanDistance(targetDescriptor, faceDescriptor);
+//                 if (distance < threshold) {
+//                     matches.push(image);
+//                     break;
+//                 }
+//             }
+//         }
+//
+//         res.json({ images: matches });
+//     } catch (error) {
+//         console.error("Error searching by face:", error);
+//         res.status(500).json({ error: "Internal Server Error" });
+//     }
+// });
 app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
@@ -190,7 +188,7 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
 
         try {
             const thumbnails = await generateFaceThumbnails(req.file.buffer);
-            await storeFaceThumbnails(thumbnails, userId); // Assuming filename as imageId for simplicity
+            await storeFaceThumbnails(thumbnails, userId,filename); // Assuming filename as imageId for simplicity
             imageDetails.faces = thumbnails; // Store thumbnails if found
         } catch (error) {
             console.log("No faces detected in the image.");
@@ -219,7 +217,7 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
 });
 
 
-const storeFaceThumbnails = async (thumbnails, userId) => {
+const storeFaceThumbnails = async (thumbnails, userId, fileName) => {
     const userDocRef = db.db.collection('users').doc(userId);
 
     const userDoc = await userDocRef.get();
@@ -232,7 +230,8 @@ const storeFaceThumbnails = async (thumbnails, userId) => {
 
     const newFaces = thumbnails.map((thumbnail, index) => ({
         id: `face_${existingFaces.length + index}`,
-        thumbnail: thumbnail.toString('base64')
+        thumbnail: thumbnail.toString('base64'),
+        filename: fileName
     }));
 
     await userDocRef.update({
