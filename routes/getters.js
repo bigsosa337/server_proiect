@@ -12,21 +12,29 @@ const parsePagination = (req) => {
 };
 
 // List images for the authenticated user with pagination
+// Updated endpoint examples with pagination support
+
+// List images for the authenticated user
 router.get('/listImages', checkAuthorization, async (req, res) => {
     try {
         const userId = req.user.id;
-        const { limit, page } = parsePagination(req);
+        const { page = 1, limit = 10 } = req.query;
+        const offset = (page - 1) * limit;
+
         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
-        const snapshot = await userImagesRef.limit(limit).offset((page - 1) * limit).get();
+        const snapshot = await userImagesRef.orderBy('uploadedAt').offset(offset).limit(Number(limit)).get();
 
         const filenames = snapshot.docs.map(doc => doc.data().filename.split('/').pop());
 
-        res.json({ images: filenames });
+        res.json({ images: filenames, hasMore: filenames.length === Number(limit) });
     } catch (error) {
         console.error("Error listing images:", error);
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
+// Similar updates should be made to the other endpoints like listSharedImages, searchImages, searchSharedImages, getByTags, and getSharedByTags
+
 
 // List albums for the authenticated user
 router.get('/listAlbums', checkAuthorization, async (req, res) => {
@@ -88,11 +96,14 @@ router.get('/getImageData/images/:filename', checkAuthorization, async (req, res
 });
 
 // Get image info
+// Get image info
 router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = `images/${req.params.filename}`; // Ensure the filename matches the stored format
-        const userId = req.user.id;
-        console.log('Filename:', filename, "-0--------------------------------------------------")
+        const userId = req.query.sharedUserId || req.user.id; // Use sharedUserId if present, else use the authenticated user's id
+
+        console.log('Filename:', filename, "- User ID:", userId); // Log for debugging
+
         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
         const imageSnapshot = await userImagesRef.where('filename', '==', filename).get();
 
@@ -112,6 +123,8 @@ router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
+
 
 // Search images by title
 router.get('/searchImages', checkAuthorization, async (req, res) => {
