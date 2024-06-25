@@ -255,7 +255,6 @@ app.get('/getFaces/:filename', checkAuthorization, async (req, res) => {
 
         const imageData = snapshot.docs[0].data();
         const faces = imageData.faces || [];
-
         res.json({ faces });
     } catch (error) {
         console.error("Error retrieving faces:", error);
