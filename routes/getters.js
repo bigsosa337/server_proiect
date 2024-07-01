@@ -161,6 +161,35 @@ router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
         }
 
         const imageData = imageSnapshot.docs[0].data();
+        console.log('Image data:', imageData)
+        res.json({
+            filename: imageData.filename,
+            title: imageData.title,
+            tags: imageData.tags,
+            uploadedby: imageData.userEmail,
+            uploadedAt: imageData.uploadedAt.toDate()
+        });
+    } catch (error) {
+        console.error("Error retrieving image information:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+router.get('/getImageInfo/images/:filename', checkAuthorization, async (req, res) => {
+    try {
+        const filename = `images/${req.params.filename}`; // Ensure the filename matches the stored format
+        const userId = req.query.sharedUserId || req.user.id; // Use sharedUserId if present, else use the authenticated user's id
+
+        console.log('Filename:', filename, "- User ID:", userId); // Log for debugging
+
+        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+        const imageSnapshot = await userImagesRef.where('filename', '==', filename).get();
+
+        if (imageSnapshot.empty) {
+            return res.status(404).json({ error: "Image not found." });
+        }
+
+        const imageData = imageSnapshot.docs[0].data();
 
         res.json({
             filename: imageData.filename,
@@ -175,6 +204,10 @@ router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
 
 
 
+const createSearchTerms = (query) => {
+    return query.toLowerCase().split(' ').filter(term => term.trim() !== '');
+};
+
 // Search images by title
 router.get('/searchImages', checkAuthorization, async (req, res) => {
     try {
@@ -185,7 +218,7 @@ router.get('/searchImages', checkAuthorization, async (req, res) => {
             return res.status(400).json({ error: 'Search query is required.' });
         }
 
-        const searchTerms = createSearchTerm(query);
+        const searchTerms = createSearchTerms(query);
         console.log('Search Terms:', searchTerms);
 
         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
@@ -193,7 +226,7 @@ router.get('/searchImages', checkAuthorization, async (req, res) => {
         const allImages = querySnapshot.docs.map(doc => doc.data());
 
         const matchedImages = allImages.filter(image =>
-            searchTerms.some(term => image.title.toLowerCase().includes(term))
+            searchTerms.every(term => image.title.toLowerCase().includes(term))
         );
 
         const filenames = matchedImages.map(image => image.filename);
@@ -207,35 +240,37 @@ router.get('/searchImages', checkAuthorization, async (req, res) => {
 });
 
 // Search shared images by title
-// router.get('/searchSharedImages/:sharedUserId', checkAuthorization, async (req, res) => {
-//     try {
-//         const { query } = req.query;
-//         const sharedUserId = req.params.sharedUserId;
-//
-//         if (!query) {
-//             return res.status(400).json({ error: 'Search query is required.' });
-//         }
-//
-//         const searchTerms = createSearchTerm(query);
-//         console.log('Search Terms:', searchTerms);
-//
-//         const sharedUserImagesRef = db.db.collection('users').doc(sharedUserId).collection('images');
-//         const querySnapshot = await sharedUserImagesRef.get();
-//         const allImages = querySnapshot.docs.map(doc => doc.data());
-//
-//         const matchedImages = allImages.filter(image =>
-//             searchTerms.some(term => image.title.toLowerCase().includes(term))
-//         );
-//
-//         const filenames = matchedImages.map(image => image.filename);
-//         console.log('Final Filenames:', filenames);
-//
-//         res.json({ images: filenames });
-//     } catch (error) {
-//         console.error('Error searching shared images:', error);
-//         res.status(500).json({ error: 'Internal Server Error' });
-//     }
-// });
+router.get('/searchSharedImages/:sharedUserId', checkAuthorization, async (req, res) => {
+    try {
+        const { query } = req.query;
+        const sharedUserId = req.params.sharedUserId;
+
+        if (!query) {
+            return res.status(400).json({ error: 'Search query is required.' });
+        }
+
+        const searchTerms = createSearchTerms(query);
+        console.log('Search Terms:', searchTerms);
+
+        const sharedUserImagesRef = db.db.collection('users').doc(sharedUserId).collection('images');
+        const querySnapshot = await sharedUserImagesRef.get();
+        const allImages = querySnapshot.docs.map(doc => doc.data());
+
+        const matchedImages = allImages.filter(image =>
+            searchTerms.every(term => image.title.toLowerCase().includes(term))
+        );
+
+        const filenames = matchedImages.map(image => image.filename);
+        console.log('Final Filenames:', filenames);
+
+        res.json({ images: filenames });
+    } catch (error) {
+        console.error('Error searching shared images:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+
 
 // Get images by tags
 router.get('/getByTags', checkAuthorization, async (req, res) => {

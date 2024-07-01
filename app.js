@@ -125,42 +125,7 @@ const fetchWithRetry = async (url, options, maxRetries = 10) => {
     }
     return response;
 };
-//
-// app.post('/searchByFace', checkAuthorization, async (req, res) => {
-//     try {
-//         const { descriptor } = req.body;
-//         if (!descriptor) {
-//             return res.status(400).json({ error: "No face descriptor provided." });
-//         }
-//
-//         const userId = req.user.id;
-//         const targetDescriptor = new Float32Array(descriptor);
-//
-//         // Retrieve all user images and compare face descriptors
-//         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
-//         const snapshot = await userImagesRef.get();
-//         const images = snapshot.docs.map(doc => doc.data());
-//
-//         const threshold = 0.6;  // Adjust threshold based on your needs
-//         const matches = [];
-//
-//         for (const image of images) {
-//             for (const face of image.faces) {
-//                 const faceDescriptor = new Float32Array(face.descriptor);
-//                 const distance = faceapi.euclideanDistance(targetDescriptor, faceDescriptor);
-//                 if (distance < threshold) {
-//                     matches.push(image);
-//                     break;
-//                 }
-//             }
-//         }
-//
-//         res.json({ images: matches });
-//     } catch (error) {
-//         console.error("Error searching by face:", error);
-//         res.status(500).json({ error: "Internal Server Error" });
-//     }
-// });
+
 app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
@@ -366,6 +331,83 @@ app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
         // Delete the image file from Firebase Storage
         await file.delete();
 
+        // Fetch the image metadata from the Firestore database
+        const imageMetadata = await db.db.collection("users").doc(userId).collection("images")
+            .where("filename", "==", `images/${filename}`)
+            .get();
+
+        if (imageMetadata.empty) {
+            return res.status(404).json({ error: "Image metadata not found." });
+        }
+
+        const firestoreDoc = imageMetadata.docs[0];
+        const imageData = firestoreDoc.data();
+        const imageTags = imageData.tags;
+
+        // Delete the image metadata
+        await firestoreDoc.ref.delete();
+
+        // Check if there are any other images with the same tags
+        const imagesWithTagsQuery = await db.db.collection("users").doc(userId).collection("images")
+            .where("tags", "array-contains-any", imageTags)
+            .get();
+
+        // If no other images have the same tags, remove the tags from the tag collection
+        if (imagesWithTagsQuery.empty) {
+            for (const tag of imageTags) {
+                const tagQuery = await db.db.collection("tags")
+                    .where("tag", "==", tag)
+                    .get();
+
+                if (!tagQuery.empty) {
+                    const tagDoc = tagQuery.docs[0];
+                    await tagDoc.ref.delete();
+                }
+            }
+        }
+
+        // Fetch the user's document to update the faces array
+        const userDocRef = db.db.collection('users').doc(userId);
+        const userDoc = await userDocRef.get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        const userData = userDoc.data();
+        const existingFaces = userData.faces || [];
+
+        // Remove faces associated with the deleted image
+        const updatedFaces = existingFaces.filter(face => face.filename !== `images/${filename}`);
+
+        // Update the user's document with the new faces array
+        await userDocRef.update({
+            faces: updatedFaces
+        });
+
+        res.json({ message: "Image and its faces deleted successfully." });
+    } catch (error) {
+        console.error("Error deleting image:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+
+app.delete('/deleteImage/images/:filename', checkAuthorization, async (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const userId = req.user.id; // Assuming checkAuthorization middleware adds user info to req.user
+        const file = storage.bucket().file(`images/${filename}`);
+
+        const [fileExists] = await file.exists();
+
+        if (!fileExists) {
+            return res.status(404).json({ error: "Image not found." });
+        }
+
+        // Delete the image file from Firebase Storage
+        await file.delete();
+
         // Delete the image metadata from the Firestore database
         const imageMetadata = await db.db.collection("users").doc(userId).collection("images")
             .where("filename", "==", `images/${filename}`)
@@ -407,6 +449,40 @@ app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
+app.delete('/wipeUserData', checkAuthorization, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const userRef = db.db.collection('users').doc(userId);
+
+        // Delete user images
+        const imagesSnapshot = await userRef.collection('images').get();
+        imagesSnapshot.forEach(async (doc) => {
+            await doc.ref.delete();
+        });
+
+        // Delete user tags
+        const tagsSnapshot = await userRef.collection('tags').get();
+        tagsSnapshot.forEach(async (doc) => {
+            await doc.ref.delete();
+        });
+
+        // Delete user faces
+        const userDoc = await userRef.get();
+        if (userDoc.exists) {
+            await userRef.update({ faces: [] });
+        }
+
+        // Optionally delete other collections/documents related to the user
+        // ...
+
+        res.json({ message: "User data wiped successfully." });
+    } catch (error) {
+        console.error("Error wiping user data:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
 
 // Duplicate an image
 app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
