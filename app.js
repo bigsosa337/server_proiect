@@ -224,10 +224,11 @@ const storeFaceThumbnails = async (thumbnails, userId, fileName) => {
 };
 
 // Endpoint to update image metadata
+
 app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
-        const userId = req.user.id; // Assuming checkAuthorization middleware adds user info to req.user
+        const userId = req.user.id;
         const file = storage.bucket().file(`images/${filename}`);
         const query = db.db.collection("users").doc(userId).collection("images").where("filename", "==", `images/${filename}`);
         const snapshot = await query.get();
@@ -245,22 +246,18 @@ app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
         };
 
         const updatePromises = snapshot.docs.map(async (doc) => {
-            // Get the existing tags
             const existingTags = doc.data().tags || [];
 
-            // Compare existing tags with new tags
             const removedTags = existingTags.filter(tag => !imageInfo.tags.includes(tag));
             const addedTags = imageInfo.tags.filter(tag => !existingTags.includes(tag));
 
-            // Update the document with the new data
             await doc.ref.update(imageInfo);
+
+            const userTagsRef = db.db.collection('users').doc(userId).collection('tags');
 
             // Remove tags that were removed from the image
             const removeTagPromises = removedTags.map(async (tag) => {
-                const tagQuery = await db.db.collection("tags")
-                    .where("tag", "==", tag)
-                    .get();
-
+                const tagQuery = await userTagsRef.where('name', '==', tag).get();
                 if (!tagQuery.empty) {
                     const tagDoc = tagQuery.docs[0];
                     await tagDoc.ref.delete();
@@ -269,20 +266,15 @@ app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
 
             // Add new tags to the tag collection
             const addTagPromises = addedTags.map(async (tag) => {
-                const tagExistsQuery = await db.db.collection("tags")
-                    .where("tag", "==", tag)
-                    .get();
-
+                const tagExistsQuery = await userTagsRef.where('name', '==', tag).get();
                 if (tagExistsQuery.empty) {
-                    await db.db.collection("tags").add({ tag: tag });
+                    await userTagsRef.add({ name: tag });
                 }
             });
 
-            // Await all remove and add tag promises
             await Promise.all([...removeTagPromises, ...addTagPromises]);
         });
 
-        // Await all update promises
         await Promise.all(updatePromises);
 
         res.json({ message: "Image updated successfully." });
@@ -332,8 +324,8 @@ app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
         // If no other images have the same tags, remove the tags from the tag collection
         if (imagesWithTagsQuery.empty) {
             for (const tag of imageTags) {
-                const tagQuery = await db.db.collection("tags")
-                    .where("tag", "==", tag)
+                const tagQuery = await db.db.collection("users").doc(userId).collection("tags")
+                    .where("name", "==", tag)
                     .get();
 
                 if (!tagQuery.empty) {
@@ -422,7 +414,7 @@ app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
         await file.copy(duplicatedFilename);
 
         // fetch the metadata of the original image from Firestore
-        const imageMetadata = await db.db.collection("images")
+        const imageMetadata = await db.db.collection("users").doc(req.user.id).collection("images")
             .where("filename", "==", `images/${filename}`)
             .get();
 
@@ -440,7 +432,7 @@ app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
             tags: originalMetadata.tags,
         };
 
-        await db.db.collection("images").add(duplicatedImageDetails);
+        await db.db.collection("users").doc(req.user.id).collection("images").add(duplicatedImageDetails);
 
         res.json({ message: "Image duplicated successfully." });
     } catch (error) {

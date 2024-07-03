@@ -40,7 +40,7 @@ router.get('/listImages', checkAuthorization, async (req, res) => {
 });
 
 // Get image data
-router.get('/getImageData/:filename', checkAuthorization, async (req, res) => {
+const getImageDataHandler = async (req, res) => {
     try {
         const filename = req.params.filename;
         const file = storage.bucket().file(`images/${filename}`);
@@ -52,13 +52,18 @@ router.get('/getImageData/:filename', checkAuthorization, async (req, res) => {
         }
 
         const fileStream = file.createReadStream();
-        res.setHeader('Content-Type', 'image/jpeg'); // Adjust the content type as needed
+        res.setHeader('Content-Type', 'image/jpeg');
         fileStream.pipe(res);
     } catch (error) {
         console.error("Error retrieving image data:", error);
         res.status(500).json({ error: "Internal Server Error" });
     }
-});
+};
+
+// 2 paths as there were some naming issues
+router.get('/getImageData/:filename', checkAuthorization, getImageDataHandler);
+router.get('/getImageData/images/:filename', checkAuthorization, getImageDataHandler);
+
 
 // Get image info
 router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
