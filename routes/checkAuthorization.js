@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const db = require('../database');
-const secret = 'secretdiscret'; // Ideally, use environment variables to store secrets
+const secret = 'secretdiscret';
 
 const checkAuthorization = async (req, res, next) => {
     const authHeader = req.headers.authorization;

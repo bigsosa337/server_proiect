@@ -15,7 +15,11 @@ const user = require('./routes/user');
 const app = express();
 const port = 3000;
 
-// Middleware
+/**
+ * =========================================
+ * Middleware
+ * =========================================
+ */
 app.use(cors({
     origin: 'http://localhost:5173',
     credentials: true
@@ -35,7 +39,11 @@ app.use((req, res, next) => {
     next();
 });
 
-// Routes
+/**
+ * =========================================
+ * Routes
+ * =========================================
+ */
 app.use('/', auth);
 app.use('/', getters);
 app.use('/', user);
@@ -45,13 +53,21 @@ app.listen(port, () => {
     console.log(`Example app listening on port ${port}!`);
 });
 
-// Firebase Storage setup
+/**
+ * =========================================
+ * Firebase Storage Setup
+ * =========================================
+ */
 const { storage } = require("./database");
 const upload = multer({
     storage: multer.memoryStorage()
 });
 
-// Face API setup
+/**
+ * =========================================
+ * Face API Setup
+ * =========================================
+ */
 const { Canvas, Image, ImageData } = canvas;
 faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
 const loadModels = async () => {
@@ -61,7 +77,11 @@ const loadModels = async () => {
 };
 loadModels();
 
-
+/**
+ * =========================================
+ * Utility Functions
+ * =========================================
+ */
 
 /**
  * Generates thumbnails for each detected face in the given image buffer.
@@ -97,6 +117,13 @@ const generateFaceThumbnails = async (imageBuffer) => {
 
     return thumbnails.map(thumb => thumb.toString('base64')); // Convert each buffer to a base64 string
 };
+
+/**
+ * =========================================
+ * API Endpoints
+ * =========================================
+ */
+
 // Endpoint to get face thumbnails
 app.post('/getFaceThumbnails', upload.single('image'), async (req, res) => {
     try {
@@ -111,21 +138,8 @@ app.post('/getFaceThumbnails', upload.single('image'), async (req, res) => {
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
-const fetchWithRetry = async (url, options, maxRetries = 10) => {
-    let retries = 0;
-    let response;
-    while (retries < maxRetries) {
-        response = await fetch(url, options);
-        if (response.status === 503) {
-            retries += 1;
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-        } else {
-            return response;
-        }
-    }
-    return response;
-};
 
+// Endpoint to upload an image
 app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req, res) => {
     try {
         if (!req.file) {
@@ -153,7 +167,7 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
 
         try {
             const thumbnails = await generateFaceThumbnails(req.file.buffer);
-            await storeFaceThumbnails(thumbnails, userId,filename); // Assuming filename as imageId for simplicity
+            await storeFaceThumbnails(thumbnails, userId, filename); // Assuming filename as imageId for simplicity
             imageDetails.faces = thumbnails; // Store thumbnails if found
         } catch (error) {
             console.log("No faces detected in the image.");
@@ -181,7 +195,12 @@ app.post('/uploadImage', checkAuthorization, upload.single('image'), async (req,
     }
 });
 
-
+/**
+ * Stores face thumbnails in the Firestore database.
+ * @param {Array} thumbnails - The array of face thumbnail buffers.
+ * @param {string} userId - The ID of the user uploading the image.
+ * @param {string} fileName - The name of the image file.
+ */
 const storeFaceThumbnails = async (thumbnails, userId, fileName) => {
     const userDocRef = db.db.collection('users').doc(userId);
 
@@ -204,49 +223,7 @@ const storeFaceThumbnails = async (thumbnails, userId, fileName) => {
     });
 };
 
-app.get('/getFaces/:filename', checkAuthorization, async (req, res) => {
-    try {
-        const filename = req.params.filename;
-        const userId = req.user.id; // Assuming checkAuthorization middleware adds user info to req.user
-
-        const imageQuery = db.db.collection("users").doc(userId).collection("images")
-            .where("filename", "==", `images/${filename}`);
-
-        const snapshot = await imageQuery.get();
-
-        if (snapshot.empty) {
-            return res.status(404).json({ error: "Image not found." });
-        }
-
-        const imageData = snapshot.docs[0].data();
-        const faces = imageData.faces || [];
-        res.json({ faces });
-    } catch (error) {
-        console.error("Error retrieving faces:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
-app.get('/getFaces', checkAuthorization, async (req, res) => {
-    try {
-        const userId = req.user.id;  // Assuming checkAuthorization adds user info to req.user
-        const userDocRef = db.db.collection('users').doc(userId);
-
-        const doc = await userDocRef.get();
-        if (!doc.exists) {
-            return res.status(404).json({ error: "User not found." });
-        }
-
-        const userData = doc.data();
-        const faceThumbnails = userData.faces || [];  // Ensure there is a default empty array if no faces are stored
-        console.log(faceThumbnails)
-        console.log(userData)
-        res.status(200).json({ faces: faceThumbnails });
-    } catch (error) {
-        console.error('Failed to retrieve face thumbnails:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
+// Endpoint to update image metadata
 app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
@@ -315,7 +292,7 @@ app.patch('/updateImage/:filename', checkAuthorization, async (req, res) => {
     }
 });
 
-// Delete an image
+// Endpoint to delete an image
 app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
@@ -392,64 +369,7 @@ app.delete('/deleteImage/:filename', checkAuthorization, async (req, res) => {
     }
 });
 
-
-app.delete('/deleteImage/images/:filename', checkAuthorization, async (req, res) => {
-    try {
-        const filename = req.params.filename;
-        const userId = req.user.id; // Assuming checkAuthorization middleware adds user info to req.user
-        const file = storage.bucket().file(`images/${filename}`);
-
-        const [fileExists] = await file.exists();
-
-        if (!fileExists) {
-            return res.status(404).json({ error: "Image not found." });
-        }
-
-        // Delete the image file from Firebase Storage
-        await file.delete();
-
-        // Delete the image metadata from the Firestore database
-        const imageMetadata = await db.db.collection("users").doc(userId).collection("images")
-            .where("filename", "==", `images/${filename}`)
-            .get();
-
-        if (imageMetadata.empty) {
-            return res.status(404).json({ error: "Image metadata not found." });
-        }
-
-        // Get the tags associated with the image being deleted
-        const imageTags = imageMetadata.docs[0].data().tags;
-
-        // Delete the image metadata
-        const firestoreDoc = imageMetadata.docs[0];
-        await firestoreDoc.ref.delete();
-
-        // Check if there are any other images with the same tags
-        const imagesWithTagsQuery = await db.db.collection("users").doc(userId).collection("images")
-            .where("tags", "array-contains-any", imageTags)
-            .get();
-
-        // If no other images have the same tags, remove the tags from the tag collection
-        if (imagesWithTagsQuery.empty) {
-            for (const tag of imageTags) {
-                const tagQuery = await db.db.collection("tags")
-                    .where("tag", "==", tag)
-                    .get();
-
-                if (!tagQuery.empty) {
-                    const tagDoc = tagQuery.docs[0];
-                    await tagDoc.ref.delete();
-                }
-            }
-        }
-
-        res.json({ message: "Image deleted successfully." });
-    } catch (error) {
-        console.error("Error deleting image:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
+// Endpoint to wipe user data
 app.delete('/wipeUserData', checkAuthorization, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -483,8 +403,7 @@ app.delete('/wipeUserData', checkAuthorization, async (req, res) => {
     }
 });
 
-
-// Duplicate an image
+// Endpoint to duplicate an image
 app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
     try {
         const filename = req.params.filename;
@@ -493,7 +412,7 @@ app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
         const [fileExists] = await file.exists();
 
         if (!fileExists) {
-            return res.status(404).json({error: "Image not found."});
+            return res.status(404).json({ error: "Image not found." });
         }
 
         // create a new unique filename for the duplicate
@@ -508,7 +427,7 @@ app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
             .get();
 
         if (imageMetadata.empty) {
-            return res.status(404).json({error: "Image metadata not found."});
+            return res.status(404).json({ error: "Image metadata not found." });
         }
 
         const originalMetadata = imageMetadata.docs[0].data();
@@ -523,10 +442,10 @@ app.post('/duplicateImage/:filename', checkAuthorization, async (req, res) => {
 
         await db.db.collection("images").add(duplicatedImageDetails);
 
-        res.json({message: "Image duplicated successfully."});
+        res.json({ message: "Image duplicated successfully." });
     } catch (error) {
         console.error("Error duplicating image:", error);
-        res.status(500).json({error: "Internal Server Error"});
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 

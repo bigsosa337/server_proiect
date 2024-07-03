@@ -3,14 +3,19 @@ const router = express.Router();
 const db = require('../database');
 const checkAuthorization = require('./checkAuthorization');
 
+/**
+ * =========================================
+ * User Endpoints
+ * =========================================
+ */
+
 // Get user details
 router.get('/getUserDetails', checkAuthorization, async (req, res) => {
     try {
         const userId = req.user.id;
         const userRef = db.db.collection('users').doc(userId);
         const userDoc = await userRef.get();
-        console.log(userDoc)
-        console.log("asdasdasdasdasd")
+
         if (!userDoc.exists) {
             return res.status(404).json({ error: "User not found" });
         }
@@ -20,6 +25,12 @@ router.get('/getUserDetails', checkAuthorization, async (req, res) => {
         res.status(500).json({ error: "Internal Server Error" });
     }
 });
+
+/**
+ * =========================================
+ * Gallery Sharing Endpoints
+ * =========================================
+ */
 
 // Share gallery with another user
 router.post('/shareGallery', checkAuthorization, async (req, res) => {
@@ -64,6 +75,12 @@ router.post('/shareGallery', checkAuthorization, async (req, res) => {
     }
 });
 
+/**
+ * =========================================
+ * Shared Albums and Images Endpoints
+ * =========================================
+ */
+
 // Get shared albums
 router.get('/getSharedAlbums', checkAuthorization, async (req, res) => {
     try {
@@ -94,22 +111,20 @@ router.get('/getSharedAlbums', checkAuthorization, async (req, res) => {
     }
 });
 
-
-// List shared images endpoint
-// Add a route to fetch shared image filenames
+// List shared images
 router.get('/listSharedImages', checkAuthorization, async (req, res) => {
     try {
         const sharedWithRef = db.db.collection('sharedAlbums').where('sharedWith', '==', req.user.email);
         const sharedWithSnapshot = await sharedWithRef.get();
 
         let sharedImages = [];
-        sharedWithSnapshot.forEach(doc => {
+        for (const doc of sharedWithSnapshot.docs) {
             const sharedImagesRef = db.db.collection('users').doc(doc.data().owner).collection('images');
-            const sharedImagesSnapshot = sharedImagesRef.get();
+            const sharedImagesSnapshot = await sharedImagesRef.get();
             sharedImagesSnapshot.forEach(imageDoc => {
                 sharedImages.push(imageDoc.data().filename);
             });
-        });
+        }
 
         res.json({ images: sharedImages });
     } catch (error) {
@@ -118,7 +133,7 @@ router.get('/listSharedImages', checkAuthorization, async (req, res) => {
     }
 });
 
-// Add a route to fetch shared albums
+// List shared albums
 router.get('/listSharedAlbums', checkAuthorization, async (req, res) => {
     try {
         const sharedWithRef = db.db.collection('sharedAlbums').where('sharedWith', '==', req.user.email);
@@ -139,19 +154,20 @@ router.get('/listSharedAlbums', checkAuthorization, async (req, res) => {
     }
 });
 
+// List shared images by user ID
 router.get('/listSharedImages/:userId', checkAuthorization, async (req, res) => {
     try {
         const userId = req.params.userId;
         const snapshot = await db.db.collection('users').doc(userId).collection('images').get();
         const images = snapshot.docs.map(doc => doc.data().filename);
         res.json({ images });
-        console.log(images);
     } catch (error) {
         console.error('Error listing shared images:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
+// Search shared images by query
 router.get('/searchSharedImages/:userId', checkAuthorization, async (req, res) => {
     try {
         const { query, option } = req.query;
@@ -168,6 +184,7 @@ router.get('/searchSharedImages/:userId', checkAuthorization, async (req, res) =
     }
 });
 
+// Get shared images by tags
 router.get('/getSharedByTags/:userId', checkAuthorization, async (req, res) => {
     try {
         const { tags } = req.query;
@@ -183,6 +200,13 @@ router.get('/getSharedByTags/:userId', checkAuthorization, async (req, res) => {
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
+
+/**
+ * =========================================
+ * Album Endpoints
+ * =========================================
+ */
+
 // Get album images
 router.get('/getAlbumImages/:albumId', checkAuthorization, async (req, res) => {
     try {
@@ -211,21 +235,10 @@ router.get('/getAlbumImages/:albumId', checkAuthorization, async (req, res) => {
     }
 });
 
-router.get('/listSharedImages/:sharedUserId', checkAuthorization, async (req, res) => {
-    try {
-        const sharedUserId = req.params.sharedUserId;
-        const sharedUserImagesRef = db.db.collection('users').doc(sharedUserId).collection('images');
-        const snapshot = await sharedUserImagesRef.get();
-
-        const sharedImages = snapshot.docs.map(doc => doc.data().filename);
-
-        res.json({ images: sharedImages });
-    } catch (error) {
-        console.error('Error listing shared images:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
-
-
+/**
+ * =========================================
+ * Export Router
+ * =========================================
+ */
 
 module.exports = router;

@@ -1,18 +1,24 @@
 const express = require('express');
-const router = express.Router(); // Create an Express router instance
-
 const bcrypt = require('bcrypt');
-const saltRounds = 10;
 const jwt = require('jsonwebtoken');
 const db = require('../database');
+
+const router = express.Router(); // Create an Express router instance
+
+const saltRounds = 10;
 const secret = 'secretdiscret';
+
+/**
+ * =========================================
+ * User Registration
+ * =========================================
+ */
 
 // Define the registration route within the router
 router.post('/register', async (req, res) => {
     console.log('YOU ARE USING -POST- METHOD WITH:', req.body);
 
     const data = req.body;
-    console.log(data);
     const userRef = db.db.collection('users');
 
     try {
@@ -37,6 +43,12 @@ router.post('/register', async (req, res) => {
         res.status(500).send('Internal server error');
     }
 });
+
+/**
+ * =========================================
+ * User Login
+ * =========================================
+ */
 
 // Define the login route within the router
 router.post('/login', async (req, res) => {
@@ -79,5 +91,10 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// Export the router for use as middleware
+/**
+ * =========================================
+ * Export Router
+ * =========================================
+ */
+
 module.exports = router;
