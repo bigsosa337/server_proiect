@@ -31,8 +31,7 @@ router.post('/register', async (req, res) => {
 
         // Hash the password
         const salt = await bcrypt.genSalt(saltRounds);
-        const hash = await bcrypt.hash(data.password, salt);
-        data.password = hash;
+        data.password = await bcrypt.hash(data.password, salt);
 
         // Add the user to the database
         const user = await userRef.add(data);
