@@ -65,11 +65,11 @@ router.get('/getImageData/:filename', checkAuthorization, getImageDataHandler);
 router.get('/getImageData/images/:filename', checkAuthorization, getImageDataHandler);
 
 
-// Get image info
-router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
+// Extracted function for getting image info
+const getImageInfoHandler = async (req, res) => {
     try {
-        const filename = `images/${req.params.filename}`; // Ensure the filename matches the stored format
-        const userId = req.query.sharedUserId || req.user.id; // Use sharedUserId if present, else use the authenticated user's id
+        const filename = `images/${req.params.filename}`;
+        const userId = req.query.sharedUserId || req.user.id;
 
         const userImagesRef = db.db.collection('users').doc(userId).collection('images');
         const imageSnapshot = await userImagesRef.where('filename', '==', filename).get();
@@ -90,7 +90,10 @@ router.get('/getImageInfo/:filename', checkAuthorization, async (req, res) => {
         console.error("Error retrieving image information:", error);
         res.status(500).json({ error: "Internal Server Error" });
     }
-});
+};
+
+router.get('/getImageInfo/:filename', checkAuthorization, getImageInfoHandler);
+router.get('/images/:filename', checkAuthorization, getImageInfoHandler);
 
 // Search images by title
 router.get('/searchImages', checkAuthorization, async (req, res) => {
@@ -277,6 +280,40 @@ router.post('/searchByFaceDescriptor', checkAuthorization, async (req, res) => {
         res.json({ images: matchingFilenames });
     } catch (error) {
         console.error('Error searching images by face descriptor:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+router.post('/searchByFace', checkAuthorization, async (req, res) => {
+    try {
+        const { face } = req.body; // The face base64 string
+        const userId = req.user.id;
+
+        console.log('Received request to search images by face:', face);
+        console.log('User ID:', userId);
+
+        const userImagesRef = db.db.collection('users').doc(userId).collection('images');
+        const snapshot = await userImagesRef.get();
+
+        const matchingFilenames = [];
+
+        snapshot.forEach(doc => {
+            const imageData = doc.data();
+            const { faces } = imageData;
+            if (faces && faces.includes(face)) {
+                matchingFilenames.push(imageData.filename);
+            }
+        });
+
+        if (matchingFilenames.length === 0) {
+            return res.status(404).json({ error: 'No images found for the provided face.' });
+        }
+
+        console.log('Matching filenames:', matchingFilenames);
+
+        res.json({ images: matchingFilenames });
+    } catch (error) {
+        console.error('Error searching images by face:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
